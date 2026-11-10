@@ -2,7 +2,7 @@ package gol
 
 import (
 	"fmt"
-
+	"time"
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -37,7 +37,19 @@ func distributor(p Params, c distributorChannels) {
 	c.events <- StateChange{turn, Executing}
 
 	// TODO: Execute all turns of the Game of Life.
+
+	// create a ticker that will report the number of alive cells every 2 seconds
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop() // stop the ticker once the surrounding function (distributor) finishes
+
 	for turn < p.Turns {
+		select {
+		case <- ticker.C:  // the ticker receives a signal so collect aliveCells count
+			aliveCells := len(calcAliveCells(p, world))
+			c.events <- AliveCellsCount{turn, aliveCells}
+		default: // the ticker hasn't received a signal so don't do anything
+		}
+
 		mainWork := p.ImageHeight / p.Threads
 		extraWork := p.ImageHeight % p.Threads
 
