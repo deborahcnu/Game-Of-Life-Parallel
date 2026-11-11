@@ -3,6 +3,7 @@ package gol
 import (
 	"fmt"
 	"time"
+
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -44,7 +45,7 @@ func distributor(p Params, c distributorChannels) {
 
 	for turn < p.Turns {
 		select {
-		case <- ticker.C:  // the ticker receives a signal so collect aliveCells count
+		case <-ticker.C: // the ticker receives a signal so collect aliveCells count
 			aliveCells := len(calcAliveCells(p, world))
 			c.events <- AliveCellsCount{turn, aliveCells}
 		default: // the ticker hasn't received a signal so don't do anything
@@ -76,6 +77,18 @@ func distributor(p Params, c distributorChannels) {
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
 	c.events <- FinalTurnComplete{turn, calcAliveCells(p, world)}
+
+	c.ioCommand <- ioOutput
+
+	PGMfileName := fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turn)
+	c.ioFilename <- PGMfileName
+
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			c.ioOutput <- world[y][x]
+		}
+	}
+
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
