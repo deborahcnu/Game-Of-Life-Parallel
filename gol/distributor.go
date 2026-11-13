@@ -14,14 +14,14 @@ type distributorChannels struct {
 	ioFilename chan<- string
 	ioOutput   chan<- uint8
 	ioInput    <-chan uint8
-	keyPresses <-chan rune 
+	keyPresses <-chan rune
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 
-	quit := false // These flags keep track of whether 'p' or 'q'
-	pause := false // (pause or quit) have been pressed
+	quit := false            // These flags keep track of whether 'p' or 'q'
+	pause := false           // (pause or quit) have been pressed
 	quitWhilePaused := false // this flag keeps track of whether quit happens while the processing is paused or not
 	// because if they both happen, the current world is saved so the new world doesn't need to be generated
 	// TODO: Create a 2D slice to store the world.
@@ -39,6 +39,15 @@ func distributor(p Params, c distributorChannels) {
 		}
 	}
 
+	for i := 0; i < p.ImageHeight; i++ {
+		for j := 0; j < p.ImageWidth; j++ {
+			//cycles the board of the new world checking whether each specific cell is alive or dead aka white or black
+			if world[i][j] == 255 {
+				c.events <- CellFlipped{0, util.Cell{j, i}}
+			}
+		}
+	}
+
 	turn := 0
 	c.events <- StateChange{turn, Executing}
 
@@ -48,24 +57,24 @@ func distributor(p Params, c distributorChannels) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop() // stop the ticker once the surrounding function (distributor) finishes
 
-	for turn < p.Turns  {
+	for turn < p.Turns {
 		select {
 
-		case <- ticker.C:  // 2 second signal reeceived so report number of alive cells
-      
+		case <-ticker.C: // 2 second signal reeceived so report number of alive cells
+
 			aliveCells := len(calcAliveCells(p, world))
 			c.events <- AliveCellsCount{turn, aliveCells}
-		
-		case key := <- c.keyPresses: // a key has been pressed so check which one it was
+
+		case key := <-c.keyPresses: // a key has been pressed so check which one it was
 			quit, pause = handleKeyPress(p, c, world, turn, key, quit, pause) // the helper function will handle each case ('s', 'q' or 'p')
-			// and will return updated values of the states of quit and pause 
-			
+			// and will return updated values of the states of quit and pause
+
 			if pause { // if p has been pressed once:
 				c.events <- StateChange{turn, Paused} // notify SDL processing has been paused, remain this way until another key is pressed
 
 				for pause && !quit { // we must listen for keypresses while paused
 					key := <-c.keyPresses
-					quit, pause = handleKeyPress(p, c, world, turn, key, quit, pause) 
+					quit, pause = handleKeyPress(p, c, world, turn, key, quit, pause)
 
 					if quit { // if 'q' is pressed while processing is still paused...
 						quitWhilePaused = true // don't calculate the next world since the current one is already complete
@@ -81,12 +90,12 @@ func distributor(p Params, c distributorChannels) {
 		default: // in this case, the ticker hasn't received a signal so don't do anything for now
 
 		} // end of select statement
-		
+
 		if quitWhilePaused { // since 'q' was pressed while processing is still paused, don't get to the end of the turn. Save and quit
 			c.events <- FinalTurnComplete{turn, calcAliveCells(p, world)}
-        	saveWorld(p, c, world, turn)
-        	c.events <- StateChange{turn, Quitting}
-        	close(c.events)
+			saveWorld(p, c, world, turn)
+			c.events <- StateChange{turn, Quitting}
+			close(c.events)
 			return
 		}
 
@@ -112,13 +121,24 @@ func distributor(p Params, c distributorChannels) {
 			newWorld = append(newWorld, workerResult...)
 		}
 
+		for i := 0; i < p.ImageHeight; i++ {
+			for j := 0; j < p.ImageWidth; j++ {
+				//cycles the board of the new world checking whether each specific cell is alive or dead aka white or black
+				if world[i][j] != newWorld[i][j] {
+					c.events <- CellFlipped{turn, util.Cell{j, i}}
+				}
+			}
+		}
+
 		world = newWorld
 		turn++
 
+		c.events <- TurnComplete{turn}
+
 		if quit { // we only get here if 'q' was pressed while processing was happening, NOT if it was paused
 			c.events <- FinalTurnComplete{turn, calcAliveCells(p, world)} // so we finish the current generation
-			saveWorld(p, c, world, turn) // save the state of the world as PGM image and then 
-			c.events <- StateChange{turn, Quitting} 
+			saveWorld(p, c, world, turn)                                  // save the state of the world as PGM image and then
+			c.events <- StateChange{turn, Quitting}
 			close(c.events)
 			return // terminate program
 		}
@@ -147,7 +167,6 @@ func distributor(p Params, c distributorChannels) {
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
 }
-
 
 func calcAliveCells(p Params, world [][]uint8) []util.Cell {
 	LiveCell := []util.Cell{}
@@ -192,25 +211,26 @@ func worker(p Params, world [][]uint8, startY, endY int, out chan<- [][]uint8) {
 
 	out <- workerArea
 }
+
 // this helper function sends the current state of the world to the I/O goroutine so that it can be written to a PGM image.
 func saveWorld(p Params, c distributorChannels, world [][]uint8, turn int) { // also made to avoid reusing code in the switch statement
-    // added turn as a parameter since it doesn't exist yet in this function and is needed for ImageOutputComplete event
-	c.ioCommand <- ioOutput // telling the I/O goroutine that an image needs to be written
+	// added turn as a parameter since it doesn't exist yet in this function and is needed for ImageOutputComplete event
+	c.ioCommand <- ioOutput                                                    // telling the I/O goroutine that an image needs to be written
 	c.ioFilename <- fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turn) // provide a filename based on dimensions and current turn
 	for i := 0; i < p.ImageHeight; i++ {
 		for j := 0; j < p.ImageWidth; j++ {
 			c.ioOutput <- world[i][j] // sending the current world pixel values to be written to the PGM file
 		}
 	}
-	c.ioCommand <- ioCheckIdle // Make sure that the I/O has finished any output before continuing.
-	<-c.ioIdle // blocks at this line until response has been received
+	c.ioCommand <- ioCheckIdle                                                                        // Make sure that the I/O has finished any output before continuing.
+	<-c.ioIdle                                                                                        // blocks at this line until response has been received
 	c.events <- ImageOutputComplete{turn, fmt.Sprintf("%dx%dx%d", p.ImageWidth, p.ImageHeight, turn)} // event comfirming that PGM image has been saved
 }
 
 // this helper function processes keyboard input and performs the right action depending on whether S, Q or P was pressed.
 func handleKeyPress(p Params, c distributorChannels, world [][]uint8, turn int, key rune, quit bool, pause bool) (bool, bool) {
-    switch key { // with a switch statement
-	case 's': 
+	switch key { // with a switch statement
+	case 's':
 		saveWorld(p, c, world, turn) // save the state of world as PGM image and continue processing
 	case 'q':
 		quit = true // set the flag to be returned to and used by the distributor
