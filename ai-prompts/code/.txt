@@ -1,0 +1,12 @@
+AI TOOL USED:
+Claude (Anthropic)
+
+DATE:
+13/11/2026
+
+PROMPT (exactly as written):
+Explain Step 6 of the Parallel Implementation
+
+WHAT I USED THE RESPONSE FOR:
+To understand what step 6 of the parallel implementation requires and how it works,
+before writing the code myself.
